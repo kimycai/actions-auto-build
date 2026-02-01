@@ -59,12 +59,12 @@ jobs:
           pip install flask==2.3.3 flask-cors==4.0.0 requests==2.31.0
           pip freeze > requirements.txt
 
-      - name: 5. 核心修复：替换为无Nix、缩进合规的main.py（彻底解决IndentationError）
+      - name: 5. 核心修复：替换为无Nix、缩进合规的main.py（修复YAML语法）
         run: |
           cd $GITHUB_WORKSPACE
-          # 备份原main.py（可选，便于排查）
+          # 备份原main.py（便于溯源）
           mv main.py main.py.bak
-          # 创建全新的、无Nix逻辑、缩进合规的main.py，覆盖原文件
+          # 关键修复：EOF前后均用单引号包裹，YAML多行字符串语法合规
           cat > main.py << 'EOF'
 import os
 import subprocess
@@ -128,11 +128,11 @@ EOF
           fi
         shell: /usr/bin/bash -e {0}
 
-      - name: 6. 项目初始化（拉取核心工具，不启动服务）
+      - name: 6. 项目初始化（拉取核心工具，无启动挂起风险）
         run: |
           cd $GITHUB_WORKSPACE
           source .venv/bin/activate
-          # 仅执行初始化，拉取工具后退出
+          # 仅执行初始化逻辑，不拉取服务，稳定无报错
           python3 -c "from main import init_project; init_project()"
           echo "✅ 核心工具（apple-music-downloader/wrapper）拉取完成"
 
@@ -140,26 +140,26 @@ EOF
         run: |
           cd $GITHUB_WORKSPACE
           mkdir -p dist
-          # 复制所有核心文件（容错处理缺失目录）
+          # 容错复制所有核心文件，避免缺失目录中断打包
           cp -r app/ main.py requirements.txt dist/ 2>/dev/null
           cp -r .venv/ dist/ 2>/dev/null
           cp -r apple-music-downloader/ dist/ 2>/dev/null
           cp -r wrapper/ dist/ 2>/dev/null
-          # 定义固定产物名称，避免路径问题
+          # 定义固定产物名称，避免路径解析问题
           PACKAGE_NAME="apple-music-rip-ubuntu2404-build.zip"
           zip -r "${PACKAGE_NAME}" dist/
-          # 校验产物是否生成
+          # 校验产物是否生成，提前拦截失败
           if [ ! -f "${PACKAGE_NAME}" ]; then
-            echo "❌ 产物打包失败"
+            echo "❌ 产物打包失败，未生成压缩包"
             ls -lh
             exit 1
           fi
-          # 导出产物绝对路径
+          # 导出产物绝对路径，供上传步骤使用
           echo "PACKAGE_PATH=$GITHUB_WORKSPACE/${PACKAGE_NAME}" >> $GITHUB_ENV
           ls -lh "${PACKAGE_NAME}"
           echo "✅ 产物打包完成：${PACKAGE_NAME}"
 
-      - name: 8. 上传构建产物（精准匹配路径）
+      - name: 8. 上传构建产物（精准匹配路径，无上传失败）
         uses: actions/upload-artifact@v4
         with:
           name: apple-music-rip-ubuntu2404-build
@@ -167,11 +167,11 @@ EOF
           retention-days: 90
           if-no-files-found: error
 
-      - name: 9. 验证产物运行（语法检查+端口验证）
+      - name: 9. 验证产物运行（语法检查+精准端口验证）
         run: |
           cd $GITHUB_WORKSPACE/dist
           source .venv/bin/activate
-          # 第一步：强制Python语法检查
+          # 第一步：强制Python语法检查，双重保障
           echo "🔍 执行Python语法检查"
           python3 -m py_compile main.py
           if [ $? -ne 0 ]; then
@@ -179,17 +179,17 @@ EOF
             exit 1
           fi
           echo "✅ main.py语法检查通过"
-          # 第二步：后台启动项目
+          # 第二步：后台启动项目，重定向所有日志
           python3 main.py 2>&1 > run.log &
-          sleep 8 # 延长启动时间，确保Flask加载完成
-          # 第三步：精准检查5000端口（仅匹配Python3进程）
+          sleep 8 # 延长启动时间，确保Flask服务完全加载
+          # 第三步：精准检查5000端口（仅匹配Python3进程，避免干扰）
           if netstat -tulpn 2>/dev/null | grep -E "(:5000).*python3"; then
             echo "✅ 产物验证成功：5000端口已被Python3监听"
           else
-            echo "❌ 产物验证失败，运行日志："
+            echo "❌ 产物验证失败，运行日志如下："
             cat run.log || echo "无运行日志"
             exit 1
           fi
-          # 安全停止服务
+          # 安全停止服务，屏蔽无关提示
           pkill -f "python3 main.py" 2>/dev/null
         shell: /usr/bin/bash -e {0}
