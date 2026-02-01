@@ -1,12 +1,15 @@
 name: st0rmMusic 完整自动化构建（含FFmpeg+所有依赖）
+# 触发规则：main分支推送自动执行 + 保留手动触发
 on:
-  workflow_dispatch:
+  push:
+    branches: [ main ] # 仅main分支推送代码自动触发
+  workflow_dispatch:    # 保留手动触发能力，按需执行
 
 jobs:
   build-st0rm-music:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # 核心修改：锁定运行环境为Ubuntu 24.04（官方原生支持）
     steps:
-      # 步骤1：拉取仓库（含子模块）
+      # 步骤1：拉取仓库（含子模块，核心依赖，拉取到st0rmMusicPlayer目录）
       - name: 拉取st0rmMusicPlayer仓库（含子模块）
         uses: actions/checkout@v4
         with:
@@ -16,7 +19,7 @@ jobs:
           path: st0rmMusicPlayer
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 步骤2：下载并配置FFmpeg
+      # 步骤2：下载并配置FFmpeg（环境变量即时生效+双重验证，稳定版）
       - name: 安装FFmpeg（从BtbN/FFmpeg-Builds下载）
         run: |
           FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-linux64-lgpl-8.0.tar.xz"
@@ -41,7 +44,7 @@ jobs:
           /opt/ffmpeg/bin/ffmpeg -version
           echo "=== FFmpeg安装完成，全局可用 ==="
 
-      # 步骤3：配置Node.js 20.19.0
+      # 步骤3：配置Node.js 20.19.0（适配Prisma，解决版本兼容问题）
       - name: 配置Node.js 20.19.0
         uses: actions/setup-node@v4
         with:
@@ -49,18 +52,18 @@ jobs:
           cache: 'npm'
           cache-dependency-path: st0rmMusicPlayer/package-lock.json
 
-      # 步骤4：配置Python 3.9
+      # 步骤4：配置Python 3.9（匹配setup.sh脚本强制要求，适配Ubuntu 24.04）
       - name: 配置Python 3.9
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
           cache: 'pip'
 
-      # 步骤5：安装Ubuntu系统依赖
+      # 步骤5：安装Ubuntu 24.04系统依赖（setup.sh必选python3-venv，适配24.04源）
       - name: 安装系统级依赖
-        run: sudo apt update && sudo apt install -y python3-venv
+        run: sudo apt update -y && sudo apt install -y python3-venv --no-install-recommends
 
-      # 步骤6：赋予setup.sh执行权限
+      # 步骤6：赋予setup.sh执行权限（避免权限拒绝错误）
       - name: 赋予安装脚本执行权限
         run: chmod +x st0rmMusicPlayer/setup.sh
 
@@ -72,10 +75,11 @@ jobs:
         env:
           CI: true # 标记CI环境，避免脚本等待手动输入
 
-      # 步骤8：上传完整构建产物（原步骤10，序号顺延）
+      # 步骤8：上传完整构建产物（全量目录，可直接部署）
       - name: 上传完整构建产物（st0rmMusicPlayer目录全量）
+        uses: actions/setup-python@v5
         uses: actions/upload-artifact@v4
         with:
-          name: st0rmMusicPlayer-build-ubuntu-ffmpeg8.0
-          path: st0rmMusicPlayer/
-          retention-days: 14
+          name: st0rmMusicPlayer-build-ubuntu2404-ffmpeg8.0
+          path: st0rmMusicPlayer/ # 全量上传，包含所有依赖/构建产物/配置
+          retention-days: 14 # 产物保留14天，生产环境可调整为30/90
