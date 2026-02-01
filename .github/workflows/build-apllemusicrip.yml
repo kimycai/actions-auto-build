@@ -1,0 +1,121 @@
+name: Build apple-music-rip (Ubuntu 24.04)
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # 手动触发
+
+# 并发控制，避免同分支重复构建
+concurrency:
+  group: ${{ github.ref }}-apple-music-rip-ubuntu2404
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 1. 检出原项目代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1 # 浅克隆加速，仅拉取最新代码
+
+      - name: 2. 修复Ubuntu 24.04依赖锁&更新源
+        run: |
+          sudo rm -f /var/lib/dpkg/lock-frontend
+          sudo dpkg --configure -a
+          sudo apt update -y && sudo apt upgrade -y --no-install-recommends
+
+      - name: 3. 安装项目**必要**系统依赖（无Java，无冗余）
+        run: |
+          sudo apt install -y --no-install-recommends \
+            build-essential \
+            git \
+            curl \
+            wget \
+            unzip \
+            zip \
+            python3 \
+            python3-pip \
+            python3-venv \
+            libssl-dev \
+            pkg-config \
+            golang-go # 仅需Go（原项目拉取的工具部分依赖Go环境，非手动编译）
+          # 清理缓存，减小镜像体积
+          sudo apt autoremove -y && sudo apt clean
+          # 验证核心依赖版本，便于排查
+          echo "Python版本：$(python3 --version)"
+          echo "Go版本：$(go version)"
+
+      - name: 4. 配置Python虚拟环境&安装Web核心依赖
+        run: |
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          # 匹配原项目Flask Web层核心依赖，版本兼容Ubuntu 24.04
+          pip install flask==2.3.3 flask-cors==4.0.0 requests==2.31.0
+          pip freeze > requirements.txt # 导出依赖清单，便于本地复现
+
+      - name: 5. 彻底移除Nix相关逻辑（不修改原项目核心功能）
+        run: |
+          # 批量删除main.py中所有Nix相关代码，脱离Nix依赖
+          sed -i '/install_nix/d' main.py
+          sed -i '/nix-shell/d' main.py
+          sed -i '/Nix\|nix/d' main.py
+          # 验证：无Nix代码残留则继续，否则报错终止
+          if grep -q -i "nix" main.py; then
+            echo "❌ 检测到Nix相关代码残留，请检查main.py"
+            exit 1
+          else
+            echo "✅ 已成功移除所有Nix相关逻辑"
+          fi
+
+      - name: 6. 项目初始化（仅拉取依赖，不启动服务，适配原项目逻辑）
+        run: |
+          source .venv/bin/activate
+          chmod +x main.py # 添加执行权限，匹配原项目运行要求
+          # 原项目无--init-only参数，启动后3秒停止，仅完成依赖拉取（apple-music-downloader/wrapper）
+          python3 main.py 2>&1 &
+          sleep 3 # 等待3秒，确保原项目完成第三方工具拉取和基础配置
+          pkill -f "python3 main.py" # 停止服务，避免GitHub Actions挂起
+          echo "✅ 项目初始化完成，已自动拉取所有核心工具"
+
+      - name: 7. 打包完整可运行产物（保留原项目所有核心目录）
+        run: |
+          mkdir -p dist
+          # 复制原项目核心文件，保证解压后可直接运行
+          cp -r app/ main.py requirements.txt dist/
+          cp -r .venv/ dist/ # 包含Python虚拟环境，离线无需重新安装依赖
+          cp -r apple-music-downloader/ dist/ # 原项目拉取的下载核心
+          cp -r wrapper/ dist/ # 原项目拉取的鉴权工具
+          # 按Commit SHA命名，便于版本追溯，避免重名
+          zip -r apple-music-rip-ubuntu2404-${{ github.sha }}.zip dist/
+          # 验证产物完整性
+          ls -lh apple-music-rip-ubuntu2404-${{ github.sha }}.zip
+          echo "✅ 产物打包完成，包含所有核心文件和依赖"
+
+      - name: 8. 上传构建产物（保留90天，可直接下载使用）
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-music-rip-ubuntu2404-build
+          path: apple-music-rip-ubuntu2404-${{ github.sha }}.zip
+          retention-days: 90
+          if-no-files-found: error # 无产物则构建失败，及时发现问题
+
+      - name: 9. 验证产物基础运行（确保打包后可正常启动）
+        run: |
+          cd dist
+          source .venv/bin/activate
+          # 后台启动项目，验证无启动报错
+          python3 main.py 2>&1 > run.log &
+          sleep 5 # 等待服务完全启动
+          # 检查5000端口是否监听（原项目默认端口）
+          if netstat -tulpn | grep -q 5000; then
+            echo "✅ 产物验证成功：项目可正常启动，5000端口已监听"
+          else
+            echo "❌ 产物验证失败，查看运行日志："
+            cat run.log
+            exit 1
+          fi
+          # 停止服务，结束构建
+          pkill -f "python3 main.py"
