@@ -6,24 +6,24 @@ on:
     branches: [main]
   workflow_dispatch: # 手动触发，优先级最高
 
-# 并发控制：避免同分支重复构建，节省资源
+# 并发控制：避免同分支重复构建
 concurrency:
   group: ${{ github.ref }}-apple-music-rip-ubuntu2404
   cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: ubuntu-24.04 # 固定Ubuntu 24.04官方运行器
+    runs-on: ubuntu-24.04 # 固定Ubuntu 24.04运行器
     steps:
       - name: 1. 强制检出原项目完整代码
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1 # 浅克隆加速
-          repository: HARAJIT05/apple-music-rip # 强制拉取原项目
-          ref: main # 原项目主分支
-          path: . # 根目录检出，无嵌套
+          fetch-depth: 1
+          repository: HARAJIT05/apple-music-rip
+          ref: main
+          path: .
 
-      - name: 2. 修复Ubuntu 24.04依赖锁&更新软件源
+      - name: 2. 修复Ubuntu 24.04依赖锁&更新源
         run: |
           sudo rm -f /var/lib/dpkg/lock-frontend
           sudo dpkg --configure -a
@@ -50,7 +50,7 @@ jobs:
           echo "Python版本：$(python3 --version)"
           echo "Go版本：$(go version)"
 
-      - name: 4. 配置Python虚拟环境&安装Web核心依赖
+      - name: 4. 配置Python虚拟环境&安装Web依赖
         run: |
           cd $GITHUB_WORKSPACE
           python3 -m venv .venv
@@ -59,80 +59,96 @@ jobs:
           pip install flask==2.3.3 flask-cors==4.0.0 requests==2.31.0
           pip freeze > requirements.txt
 
-      - name: 5. 彻底移除Nix相关逻辑
+      - name: 5. 移除Nix相关逻辑（核心修复：注释替代删除，保留缩进）
         run: |
           cd $GITHUB_WORKSPACE
+          # 校验main.py存在性
           if [ ! -f "main.py" ]; then
             echo "❌ 未找到main.py"
             ls -la
             exit 1
           fi
-          echo "✅ 开始清理Nix相关代码"
-          sed -i '/install_nix/d' main.py
-          sed -i '/nix-shell/d' main.py
-          sed -i '/Nix\|nix/d' main.py
-          if grep -q -i "nix" main.py; then
-            echo "❌ 检测到Nix代码残留"
+          echo "✅ 开始处理Nix相关代码（注释而非删除，保留缩进）"
+          # 关键修改：用#注释含Nix关键字的行，不删除行，避免缩进结构破坏
+          sed -i '/install_nix/s/^/#/' main.py
+          sed -i '/nix-shell/s/^/#/' main.py
+          sed -i '/nix\|Nix/s/^/#/' main.py
+          # 验证：仅检查是否有未注释的Nix代码，不强制删除行
+          if grep -q -i "^[^#].*nix" main.py; then
+            echo "❌ 检测到未注释的Nix相关代码"
+            grep -n -i "^[^#].*nix" main.py
             exit 1
           fi
-          echo "✅ Nix相关逻辑清理完成"
+          echo "✅ Nix相关代码已全部注释，缩进结构保持完整"
         shell: /usr/bin/bash -e {0}
 
-      - name: 6. 项目初始化（自动拉取核心工具）
+      - name: 6. 项目初始化（自动拉取核心工具，不启动服务）
         run: |
           cd $GITHUB_WORKSPACE
           source .venv/bin/activate
           chmod +x main.py
+          # 初始化工具拉取，超时10秒确保完成
           python3 main.py 2>&1 &
-          sleep 3
-          pkill -f "python3 main.py" || echo "服务已停止"
+          sleep 10
+          # 安全停止服务，避免挂起
+          pkill -f "python3 main.py" || echo "服务已正常停止"
           echo "✅ 核心工具拉取完成"
 
-      - name: 7. 打包完整可运行产物（核心修复：统一路径+固定命名）
+      - name: 7. 打包完整可运行产物（统一路径+环境变量导出）
         run: |
           cd $GITHUB_WORKSPACE
-          # 创建产物目录
           mkdir -p dist
-          # 复制所有核心文件（容错处理缺失目录）
+          # 容错复制核心文件，避免缺失目录中断打包
           cp -r app/ main.py requirements.txt dist/ 2>/dev/null
           cp -r .venv/ dist/ 2>/dev/null
           cp -r apple-music-downloader/ dist/ 2>/dev/null || echo "⚠️ apple-music-downloader目录暂未生成"
           cp -r wrapper/ dist/ 2>/dev/null || echo "⚠️ wrapper目录暂未生成"
-          # 定义固定压缩包名称（避免SHA拼接歧义，同时保留版本追溯）
+          # 定义固定产物名称，避免SHA拼接问题
           PACKAGE_NAME="apple-music-rip-ubuntu2404-build.zip"
-          # 打包（指定根目录，确保路径唯一）
+          # 打包并压缩
           zip -r "${PACKAGE_NAME}" dist/
-          # 核心：校验压缩包是否生成成功
+          # 校验产物是否生成
           if [ ! -f "${PACKAGE_NAME}" ]; then
             echo "❌ 产物打包失败，未生成压缩包"
             ls -lh
             exit 1
           fi
-          # 打印产物信息，便于日志排查
+          # 导出产物绝对路径，供上传使用
+          echo "PACKAGE_PATH=$GITHUB_WORKSPACE/${PACKAGE_NAME}" >> $GITHUB_ENV
           ls -lh "${PACKAGE_NAME}"
           echo "✅ 产物打包完成：${PACKAGE_NAME}"
-          # 导出变量，供后续上传步骤使用（绝对统一，无匹配错误）
-          echo "PACKAGE_PATH=$GITHUB_WORKSPACE/${PACKAGE_NAME}" >> $GITHUB_ENV
 
-      - name: 8. 上传构建产物（核心修复：使用环境变量，精准匹配文件）
+      - name: 8. 上传构建产物（使用环境变量，精准匹配）
         uses: actions/upload-artifact@v4
         with:
           name: apple-music-rip-ubuntu2404-build
-          path: ${{ env.PACKAGE_PATH }} # 使用上一步导出的绝对路径，100%匹配
+          path: ${{ env.PACKAGE_PATH }}
           retention-days: 90
-          if-no-files-found: error # 无文件直接失败，及时发现问题
+          if-no-files-found: error
 
-      - name: 9. 验证产物基础运行
+      - name: 9. 验证产物运行（修复Python启动+端口检查）
         run: |
           cd $GITHUB_WORKSPACE/dist
           source .venv/bin/activate
-          python3 main.py 2>&1 > run.log &
-          sleep 5
-          if netstat -tulpn | grep -q 5000; then
-            echo "✅ 产物验证成功：5000端口已监听"
-          else
-            echo "❌ 产物验证失败，运行日志："
-            cat run.log
+          # 关键：添加Python语法检查，提前发现缩进/语法错误
+          echo "🔍 先执行Python语法检查，排查代码错误"
+          python3 -m py_compile main.py
+          if [ $? -ne 0 ]; then
+            echo "❌ main.py语法检查失败，存在缩进/语法错误"
             exit 1
           fi
-          pkill -f "python3 main.py"
+          echo "✅ main.py语法检查通过，开始启动项目"
+          # 后台启动项目，重定向所有日志
+          python3 main.py 2>&1 > run.log &
+          sleep 8 # 延长启动时间，确保Flask服务完全加载
+          # 端口检查（兼容非root权限，仅过滤python3进程）
+          if netstat -tulpn 2>/dev/null | grep -E "(:5000).*python3"; then
+            echo "✅ 产物验证成功：5000端口已被Python3监听"
+          else
+            echo "❌ 产物验证失败，运行日志如下："
+            cat run.log || echo "无运行日志"
+            exit 1
+          fi
+          # 安全停止服务
+          pkill -f "python3 main.py" 2>/dev/null
+        shell: /usr/bin/bash -e {0}
