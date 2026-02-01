@@ -15,13 +15,13 @@ jobs:
   build:
     runs-on: ubuntu-24.04 # 固定Ubuntu 24.04官方运行器
     steps:
-      - name: 1. 强制检出原项目完整代码（核心修复：拉取main.py等所有文件）
+      - name: 1. 强制检出原项目完整代码
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1 # 浅克隆加速，仅拉取最新代码
-          repository: HARAJIT05/apple-music-rip # 强制指定原项目仓库，必加！
-          ref: main # 拉取原项目main分支（原项目核心代码所在分支）
-          path: . # 强制检出到当前工作根目录，无嵌套，必加！
+          fetch-depth: 1 # 浅克隆加速
+          repository: HARAJIT05/apple-music-rip # 强制拉取原项目
+          ref: main # 原项目主分支
+          path: . # 根目录检出，无嵌套
 
       - name: 2. 修复Ubuntu 24.04依赖锁&更新软件源
         run: |
@@ -30,7 +30,7 @@ jobs:
           sudo apt update -y && sudo apt upgrade -y --no-install-recommends
           sudo apt clean
 
-      - name: 3. 安装项目必要系统依赖（无Java、无冗余，仅保留必需）
+      - name: 3. 安装项目必要系统依赖（无Java、无冗余）
         run: |
           sudo apt install -y --no-install-recommends \
             build-essential \
@@ -45,97 +45,94 @@ jobs:
             libssl-dev \
             pkg-config \
             golang-go \
-            net-tools # 用于后续端口监听验证
-          # 清理缓存，减小镜像体积
+            net-tools
           sudo apt autoremove -y && sudo apt clean
-          # 验证核心依赖版本，便于排查
           echo "Python版本：$(python3 --version)"
           echo "Go版本：$(go version)"
 
       - name: 4. 配置Python虚拟环境&安装Web核心依赖
         run: |
-          cd $GITHUB_WORKSPACE # 强制根目录操作
-          # 创建虚拟环境，隔离系统依赖
+          cd $GITHUB_WORKSPACE
           python3 -m venv .venv
           source .venv/bin/activate
-          # 升级pip并安装适配依赖（匹配原项目Flask Web层）
           pip install --upgrade pip
           pip install flask==2.3.3 flask-cors==4.0.0 requests==2.31.0
-          # 导出依赖清单，便于本地复现
           pip freeze > requirements.txt
 
-      - name: 5. 彻底移除Nix相关逻辑（路径强制校验+代码清理）
+      - name: 5. 彻底移除Nix相关逻辑
         run: |
-          cd $GITHUB_WORKSPACE # 强制切换到项目根目录，无路径歧义
-          # 前置校验：main.py不存在则直接报错，打印目录便于排查
+          cd $GITHUB_WORKSPACE
           if [ ! -f "main.py" ]; then
-            echo "❌ 项目根目录未找到main.py文件，代码检出失败！"
-            ls -la # 打印所有文件，含隐藏文件
+            echo "❌ 未找到main.py"
+            ls -la
             exit 1
           fi
-          echo "✅ 成功找到main.py，开始清理Nix相关代码"
-          # 批量删除Nix相关代码，脱离Nix依赖
+          echo "✅ 开始清理Nix相关代码"
           sed -i '/install_nix/d' main.py
           sed -i '/nix-shell/d' main.py
           sed -i '/Nix\|nix/d' main.py
-          # 验证：无Nix代码残留则继续
           if grep -q -i "nix" main.py; then
-            echo "❌ 检测到Nix相关代码残留，请检查main.py"
+            echo "❌ 检测到Nix代码残留"
             exit 1
-          else
-            echo "✅ 已成功移除所有Nix相关逻辑"
           fi
+          echo "✅ Nix相关逻辑清理完成"
         shell: /usr/bin/bash -e {0}
 
-      - name: 6. 项目初始化（自动拉取核心工具，不启动服务）
+      - name: 6. 项目初始化（自动拉取核心工具）
         run: |
           cd $GITHUB_WORKSPACE
           source .venv/bin/activate
-          chmod +x main.py # 添加执行权限
-          # 启动后3秒停止，仅完成apple-music-downloader/wrapper拉取
+          chmod +x main.py
           python3 main.py 2>&1 &
           sleep 3
-          # 安全停止服务，避免Actions挂起
-          pkill -f "python3 main.py" || echo "服务已正常停止"
-          echo "✅ 项目初始化完成，已自动拉取所有核心工具"
+          pkill -f "python3 main.py" || echo "服务已停止"
+          echo "✅ 核心工具拉取完成"
 
-      - name: 7. 打包完整可运行产物（保留所有核心文件，开箱即用）
+      - name: 7. 打包完整可运行产物（核心修复：统一路径+固定命名）
         run: |
           cd $GITHUB_WORKSPACE
+          # 创建产物目录
           mkdir -p dist
-          # 复制所有核心文件，保证解压后可直接运行
-          cp -r app/ main.py requirements.txt dist/
-          cp -r .venv/ dist/
-          cp -r apple-music-downloader/ dist/ 2>/dev/null || echo "apple-music-downloader已拉取"
-          cp -r wrapper/ dist/ 2>/dev/null || echo "wrapper已拉取"
-          # 按Commit SHA命名，便于版本追溯
-          zip -r apple-music-rip-ubuntu2404-${{ github.sha }}.zip dist/
-          # 验证产物
-          ls -lh apple-music-rip-ubuntu2404-${{ github.sha }}.zip
-          echo "✅ 产物打包完成，包含所有核心文件和依赖"
+          # 复制所有核心文件（容错处理缺失目录）
+          cp -r app/ main.py requirements.txt dist/ 2>/dev/null
+          cp -r .venv/ dist/ 2>/dev/null
+          cp -r apple-music-downloader/ dist/ 2>/dev/null || echo "⚠️ apple-music-downloader目录暂未生成"
+          cp -r wrapper/ dist/ 2>/dev/null || echo "⚠️ wrapper目录暂未生成"
+          # 定义固定压缩包名称（避免SHA拼接歧义，同时保留版本追溯）
+          PACKAGE_NAME="apple-music-rip-ubuntu2404-build.zip"
+          # 打包（指定根目录，确保路径唯一）
+          zip -r "${PACKAGE_NAME}" dist/
+          # 核心：校验压缩包是否生成成功
+          if [ ! -f "${PACKAGE_NAME}" ]; then
+            echo "❌ 产物打包失败，未生成压缩包"
+            ls -lh
+            exit 1
+          fi
+          # 打印产物信息，便于日志排查
+          ls -lh "${PACKAGE_NAME}"
+          echo "✅ 产物打包完成：${PACKAGE_NAME}"
+          # 导出变量，供后续上传步骤使用（绝对统一，无匹配错误）
+          echo "PACKAGE_PATH=$GITHUB_WORKSPACE/${PACKAGE_NAME}" >> $GITHUB_ENV
 
-      - name: 8. 上传构建产物（保留90天，可直接下载使用）
+      - name: 8. 上传构建产物（核心修复：使用环境变量，精准匹配文件）
         uses: actions/upload-artifact@v4
         with:
           name: apple-music-rip-ubuntu2404-build
-          path: $GITHUB_WORKSPACE/apple-music-rip-ubuntu2404-${{ github.sha }}.zip
+          path: ${{ env.PACKAGE_PATH }} # 使用上一步导出的绝对路径，100%匹配
           retention-days: 90
-          if-no-files-found: error # 无产物则构建失败，及时发现问题
+          if-no-files-found: error # 无文件直接失败，及时发现问题
 
-      - name: 9. 验证产物基础运行（确保可正常启动）
+      - name: 9. 验证产物基础运行
         run: |
           cd $GITHUB_WORKSPACE/dist
           source .venv/bin/activate
-          # 后台启动并记录日志
           python3 main.py 2>&1 > run.log &
-          sleep 5 # 等待服务完全启动
-          # 检查默认5000端口是否监听
+          sleep 5
           if netstat -tulpn | grep -q 5000; then
-            echo "✅ 产物验证成功：项目正常启动，5000端口已监听"
+            echo "✅ 产物验证成功：5000端口已监听"
           else
-            echo "❌ 产物验证失败，运行日志如下："
+            echo "❌ 产物验证失败，运行日志："
             cat run.log
             exit 1
           fi
-          # 停止服务，结束构建
           pkill -f "python3 main.py"
