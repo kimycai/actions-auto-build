@@ -1,0 +1,129 @@
+name: st0rmMusic 打包ubuntu-latest完整环境推送到GHCR
+# 仅手动触发，避免误操作
+on:
+  workflow_dispatch:
+
+jobs:
+  build-env-image-and-push:
+    runs-on: ubuntu-latest
+    # 赋予Action推送GHCR的核心权限
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      # 步骤1：拉取仓库（含子模块，拉取到st0rmMusicPlayer目录）
+      - name: 拉取st0rmMusicPlayer仓库（含子模块）
+        uses: actions/checkout@v4
+        with:
+          repository: sn0wst0rm/st0rmMusicPlayer
+          ref: main
+          submodules: recursive
+          path: st0rmMusicPlayer
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 步骤2：下载并配置FFmpeg（全局可用，保留完整验证）
+      - name: 安装FFmpeg（从BtbN/FFmpeg-Builds下载）
+        run: |
+          FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-linux64-lgpl-8.0.tar.xz"
+          curl -L -O -S -f $FFMPEG_URL
+          
+          FFMPEG_TAR="ffmpeg-n8.0-latest-linux64-lgpl-8.0.tar.xz"
+          if [ ! -f "$FFMPEG_TAR" ]; then
+            echo "ERROR: FFmpeg压缩包下载失败！"
+            ls -l
+            exit 1
+          fi
+
+          sudo mkdir -p /opt/ffmpeg
+          sudo tar -xJf "$FFMPEG_TAR" -C /opt/ffmpeg --strip-components=1
+          
+          echo "/opt/ffmpeg/bin" >> $GITHUB_PATH
+          export PATH="/opt/ffmpeg/bin:$PATH"
+          
+          ffmpeg -version
+          ffprobe -version
+          echo "=== FFmpeg安装完成，全局可用 ==="
+
+      # 步骤3：配置Node.js 20.19.0（匹配项目运行环境）
+      - name: 配置Node.js 20.19.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+          cache-dependency-path: st0rmMusicPlayer/package-lock.json
+
+      # 步骤4：配置Python 3.9（项目后端/gamdl必需）
+      - name: 配置Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      # 步骤5：安装Ubuntu系统依赖（清理缓存减少耗时）
+      - name: 安装系统级依赖
+        run: sudo apt update && sudo apt install -y python3-venv && rm -rf /var/lib/apt/lists/*
+
+      # 步骤6：初始化项目运行环境（赋权+执行setup.sh）
+      - name: 初始化项目运行环境
+        run: |
+          chmod +x st0rmMusicPlayer/setup.sh
+          cd st0rmMusicPlayer
+          echo "" | bash ./setup.sh
+        env:
+          CI: true
+
+      # 步骤7：修复项目缺失依赖（解决运行时CSS解析报错）
+      - name: 修复项目运行依赖
+        run: |
+          cd st0rmMusicPlayer
+          npm install @tailwindcss/postcss --save-dev
+
+      # 步骤8：获取当前Action运行容器ID（打包整环境的核心）
+      - name: 获取当前ubuntu-latest运行容器ID
+        id: get_container_id
+        run: |
+          # Action的ubuntu-latest运行在docker容器中，获取当前容器ID
+          CONTAINER_ID=$(cat /proc/1/cgroup | grep docker | tail -1 | sed 's/.*\///' | cut -c 1-12)
+          echo "container_id=$CONTAINER_ID" >> $GITHUB_OUTPUT
+          echo "当前Action运行容器ID：$CONTAINER_ID"
+          # 验证容器存在
+          docker ps | grep $CONTAINER_ID
+
+      # 步骤9：登录GHCR（使用Action内置GITHUB_TOKEN，免手动PAT）
+      - name: 登录GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 步骤10：打包整环境为Docker镜像（docker commit核心步骤）
+      - name: 打包ubuntu-latest完整运行环境为镜像
+        run: |
+          # 定义镜像信息（GHCR规范格式）
+          IMAGE_NAME="st0rm-music-ubuntu-env"
+          IMAGE_TAG="latest"
+          IMAGE_FULL_NAME="ghcr.io/${{ github.repository_owner }}/$IMAGE_NAME:$IMAGE_TAG"
+          
+          # 核心：docker commit 将当前Action运行容器打包为镜像
+          docker commit ${{ steps.get_container_id.outputs.container_id }} $IMAGE_FULL_NAME
+          
+          # 验证镜像创建成功
+          echo "=== 镜像打包完成，镜像信息 ==="
+          docker images | grep $IMAGE_NAME
+          echo "镜像完整地址：$IMAGE_FULL_NAME"
+
+      # 步骤11：推送整环境镜像到GHCR（一键推送，无需额外构建）
+      - name: 推送完整环境镜像到GHCR
+        run: |
+          IMAGE_NAME="st0rm-music-ubuntu-env"
+          IMAGE_TAG="latest"
+          IMAGE_FULL_NAME="ghcr.io/${{ github.repository_owner }}/$IMAGE_NAME:$IMAGE_TAG"
+          
+          # 推送镜像到GHCR
+          docker push $IMAGE_FULL_NAME
+          
+          echo "=== 镜像推送成功！==="
+          echo "拉取命令：docker pull $IMAGE_FULL_NAME"
+          echo "启动容器命令：docker run -d --name st0rm-music -p 3000:3000 --restart always $IMAGE_FULL_NAME npm start --prefix /github/workspace/st0rmMusicPlayer"
