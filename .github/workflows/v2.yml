@@ -77,9 +77,11 @@ jobs:
 
       # 步骤8：上传完整构建产物（全量目录，可直接部署）
       - name: 上传完整构建产物（st0rmMusicPlayer目录全量）
-        uses: actions/setup-python@v5
+
         uses: actions/upload-artifact@v4
         with:
           name: st0rmMusicPlayer-build-ubuntu2404-ffmpeg8.0
           path: st0rmMusicPlayer/ # 全量上传，包含所有依赖/构建产物/配置
           retention-days: 14 # 产物保留14天，生产环境可调整为30/90
+
+
