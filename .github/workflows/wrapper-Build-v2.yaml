@@ -63,29 +63,31 @@ jobs:
           name: wrapper-executable-ubuntu2404
           path: wrapper/wrapper
 
-      # 9. 核心：直接推送wrapper到Gitee仓库（无需拉取仓库，API方式）
+      # 9. 核心修复：直接推送wrapper到Gitee（解决鉴权问题，API方式）
       - name: Push wrapper directly to Gitee (kimycai/amdl-web-manager)
         run: |
           # 定义关键参数（已替换你的信息，无需修改）
           GITEE_USER="kimycai"
           GITEE_REPO="amdl-web-manager"
-          GITEE_BRANCH="main"  # 推送的目标分支
-          FILE_PATH="wrapper"  # 仓库中存放的文件路径（根目录下的wrapper）
+          GITEE_BRANCH="main"  # 推送目标分支，可改为master（若需）
+          FILE_PATH="wrapper"  # 仓库中文件路径（根目录wrapper）
           COMMIT_MSG="Auto update wrapper executable [Ubuntu24.04 build]"
+          # 读取Gitee令牌（从GitHub Secrets中正确解析）
+          GITEE_TOKEN="${{ secrets.GITEE_TOKEN }}"
           
-          # 将可执行文件转为Base64编码（Gitee API要求文件内容为Base64）
+          # 将可执行文件转为Base64编码（Gitee API要求，不换行）
           FILE_CONTENT=$(base64 -w 0 wrapper/wrapper)
           
-          # 调用Gitee API：创建/更新文件（自动覆盖原有文件）
+          # 调用Gitee API：创建/更新文件（修复access_token传递方式，双重鉴权）
           curl -X PUT "https://gitee.com/api/v5/repos/${GITEE_USER}/${GITEE_REPO}/contents/${FILE_PATH}" \
             -H "Content-Type: application/json" \
-            -H "Authorization: token ${{ secrets.GITEE_TOKEN }}" \
-            -d '{
-              "access_token": "${{ secrets.GITEE_TOKEN }}",
-              "branch": "'"${GITEE_BRANCH}"'",
-              "content": "'"${FILE_CONTENT}"'",
-              "message": "'"${COMMIT_MSG}"'"
-            }'
+            -H "Authorization: token ${GITEE_TOKEN}" \
+            -d "{
+              \"access_token\": \"${GITEE_TOKEN}\",
+              \"branch\": \"${GITEE_BRANCH}\",
+              \"content\": \"${FILE_CONTENT}\",
+              \"message\": \"${COMMIT_MSG}\"
+            }" -v  # -v：开启详细日志，便于排查问题（可选，建议保留）
           
-          echo -e "\n✅ wrapper可执行文件已通过API直接推送到Gitee仓库！"
+          echo -e "\n✅ 若上述curl无401/403错误，wrapper已成功推送到Gitee仓库！"
           echo "仓库地址：https://gitee.com/${GITEE_USER}/${GITEE_REPO}/blob/${GITEE_BRANCH}/${FILE_PATH}"
