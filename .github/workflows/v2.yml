@@ -1,8 +1,7 @@
 name: st0rmMusic 完整自动化构建（含FFmpeg+所有依赖）
 # 触发规则：main分支推送自动执行 + 保留手动触发
 on:
-  push:
-    branches: [ main ] # 仅main分支推送代码自动触发
+
   workflow_dispatch:    # 保留手动触发能力，按需执行
 
 jobs:
