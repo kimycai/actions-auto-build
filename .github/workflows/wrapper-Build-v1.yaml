@@ -1,0 +1,63 @@
+name: wrapper-Build-v1
+on:
+  workflow_dispatch:  # 仅手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04  # 你的核心需求：Ubuntu 24.04环境
+    steps:
+      # 拉取官方源码到CI根目录的wrapper/子目录（你的场景核心适配）
+      - name: Checkout WorldObservationLog/wrapper source code
+        uses: actions/checkout@v4
+        with:
+          repository: WorldObservationLog/wrapper
+          path: wrapper
+          fetch-depth: 1
+
+      # 安装官方指定依赖+Ubuntu24.04基础编译依赖（兼容官方+新环境）
+      - name: Install build dependencies
+        run: |
+          sudo apt update -y
+          sudo apt install -y aria2 build-essential cmake wget unzip git
+          sudo apt update --fix-missing -y
+
+      # 与官方完全一致：安装LLVM
+      - name: Install LLVM
+        run: sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
+
+      # 与官方完全一致：用aria2c下载并解压NDK r23b
+      - name: Set up Android NDK r23b
+        run: | 
+          aria2c -o android-ndk-r23b-linux.zip https://dl.google.com/android/repository/android-ndk-r23b-linux.zip
+          unzip -q -d ~ android-ndk-r23b-linux.zip
+        working-directory: wrapper  # 进入源码目录执行，对齐官方上下文
+
+      # 显式配置NDK环境变量（Ubuntu24.04兼容性优化，无侵入官方逻辑）
+      - name: Set ANDROID_NDK_HOME
+        run: echo "ANDROID_NDK_HOME=~/android-ndk-r23b" >> $GITHUB_ENV
+
+      # 与官方完全一致：核心构建流程（mkdir build → cmake → make）
+      - name: Build
+        run: |
+          mkdir -p build
+          cd build
+          cmake ..
+          make -j$(nproc)  # 多核编译优化，不改变产物结果
+        working-directory: wrapper  # 源码根目录执行构建，匹配官方规则
+
+      # 可选：校验wrapper可执行文件是否存在（避免上传失败，快速排错）
+      - name: Verify wrapper executable exists
+        run: |
+          EXEC_PATH="wrapper/wrapper"
+          if [ ! -x "$EXEC_PATH" ]; then
+            echo "ERROR: wrapper可执行文件不存在，路径：$EXEC_PATH"
+            exit 1
+          fi
+          echo "✅ 产物验证通过：$EXEC_PATH（存在且具备可执行权限）"
+
+      # 核心：仅上传wrapper可执行文件作为产物（精准路径，无任何冗余）
+      - name: Upload wrapper executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrapper-executable-ubuntu2404  # 产物名清晰标识环境
+          path: wrapper/wrapper  # 唯一正确的产物路径（相对CI根目录）
