@@ -22,7 +22,7 @@ jobs:
         unzip -q -d ~ android-ndk-r23b-linux.zip
     - name: Clone Project
       run: |
-        git clone https://github.com/WorldObservationLog/wrapper
+        git clone https://github.com/WorldObservationLog/wrapper.git
         cd wrapper
         mkdir build
         cd build
