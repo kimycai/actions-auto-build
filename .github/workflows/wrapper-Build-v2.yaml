@@ -1,4 +1,4 @@
-name: wrapper-Build-Push-SelfRepo
+name: wrapper-Build-Push-SelfRepo successful
 on:
   workflow_dispatch:  # 仅手动触发，按需添加 push 自动触发
 
