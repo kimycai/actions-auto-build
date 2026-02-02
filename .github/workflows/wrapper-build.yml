@@ -1,4 +1,4 @@
-name: Build
+name: Build wrapper and push to Gitee
 
 on:
   workflow_dispatch:
