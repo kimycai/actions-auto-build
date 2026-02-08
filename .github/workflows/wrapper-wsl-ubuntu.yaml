@@ -1,4 +1,4 @@
-name: Build wrapper on WSL
+name: Build wrapper on WSL Ubuntu
 
 on:
 
