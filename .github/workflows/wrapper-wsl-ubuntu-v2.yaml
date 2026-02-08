@@ -1,0 +1,92 @@
+name: Build wrapper on WSL
+
+on:
+
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: 'Upstream repository branch to build'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout upstream repository
+      uses: actions/checkout@v4
+      with:
+        repository: WorldObservationLog/wrapper
+        path: wrapper-main
+        ref: ${{ github.event.inputs.upstream_branch || 'main' }}
+
+    - name: Checkout wrapper-wsl-ubuntu repository
+      uses: actions/checkout@v4
+      with:
+        repository: kimycai/wrapper-wsl-ubuntu
+        token: ${{ secrets.WRAPPER_PUSH_TOKEN }}
+        path: wrapper-wsl-ubuntu
+
+    - name: Enable WSL and install Ubuntu 22.04
+      run: |
+        wsl --install -d Ubuntu-22.04 --no-launch
+        wsl --set-default Ubuntu-22.04
+        # Wait for WSL to be ready
+        Start-Sleep -Seconds 10
+
+    - name: Update WSL Ubuntu 22.04 and install dependencies
+      run: |
+        wsl -u root -d Ubuntu-22.04 apt update
+        wsl -u root -d Ubuntu-22.04 apt upgrade -y
+        wsl -u root -d Ubuntu-22.04 apt install -y build-essential cmake wget unzip git lsb-release gnupg
+
+    - name: Install LLVM in WSL Ubuntu 22.04
+      run: |
+        wsl -u root -d Ubuntu-22.04 bash -c "wget -O - https://apt.llvm.org/llvm.sh | bash"
+
+    - name: Download and install Android NDK in WSL Ubuntu 22.04
+      run: |
+        wsl -d Ubuntu-22.04 wget -O android-ndk-r23b-linux.zip https://dl.google.com/android/repository/android-ndk-r23b-linux.zip
+        wsl -d Ubuntu-22.04 unzip -q -d ~ android-ndk-r23b-linux.zip
+
+    - name: Build project in WSL Ubuntu 22.04
+      run: |
+        cd wrapper-main
+        wsl -d Ubuntu-22.04 mkdir -p build
+        wsl -d Ubuntu-22.04 bash -c "cd build && cmake .. && make -j$(nproc)"
+
+    - name: Copy all build artifacts to wrapper-wsl-ubuntu directory
+      run: |
+        # Copy wrapper executable
+        if (Test-Path -Path "wrapper-main\wrapper" -PathType Leaf) {
+          Copy-Item -Path "wrapper-main\wrapper" -Destination "wrapper-wsl-ubuntu\" -Force
+        }
+        # Copy entire rootfs directory
+        if (Test-Path -Path "wrapper-main\rootfs" -PathType Container) {
+          Copy-Item -Path "wrapper-main\rootfs" -Destination "wrapper-wsl-ubuntu\" -Recurse -Force
+        }
+
+    - name: Configure Git for wrapper-wsl-ubuntu repository
+      run: |
+        cd wrapper-wsl-ubuntu
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+
+    - name: Commit and push to wrapper-wsl-ubuntu repository
+      run: |
+        cd wrapper-wsl-ubuntu
+        # Check if there are any changes to commit
+        if ((git status --porcelain | Measure-Object).Count -gt 0) {
+          # Add all changes
+          git add .
+          # Commit changes
+          git commit -m "Build: Update wrapper-wsl-ubuntu directory with latest build artifacts [skip ci]"
+          # Push to repository
+          git push origin HEAD:main
+        } else {
+          Write-Host "No changes to commit"
+        }
