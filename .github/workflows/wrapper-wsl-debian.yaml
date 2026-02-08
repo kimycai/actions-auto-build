@@ -42,7 +42,7 @@ jobs:
       run: |
         wsl -u root -d Debian apt update
         wsl -u root -d Debian apt upgrade -y
-        wsl -u root -d Debian apt install -y build-essential cmake wget unzip git
+        wsl -u root -d Debian apt install -y build-essential cmake wget unzip git lsb-release
 
     - name: Install LLVM in WSL Debian
       run: |
