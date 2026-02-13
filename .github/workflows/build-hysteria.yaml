@@ -62,4 +62,5 @@ jobs:
           git add .
           git commit -m "Build Hysteria from apernet/hysteria - $(date)" || echo "No changes to commit"
           git checkout -b build-hysteria 2>/dev/null || git checkout build-hysteria
-          git push origin build-hysteria
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push -u origin build-hysteria
