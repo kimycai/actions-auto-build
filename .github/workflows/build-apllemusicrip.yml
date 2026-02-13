@@ -1,192 +1,66 @@
-name: Build apple-music-rip (Ubuntu 24.04)
+name: "Build Hysteria from external repository"
+
 on:
-
-  workflow_dispatch: # 手动触发，优先级最高
-
-# 并发控制：避免同分支重复构建
-concurrency:
-  group: ${{ github.ref }}-apple-music-rip-ubuntu2404
-  cancel-in-progress: true
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04 # 固定Ubuntu 24.04官方运行器
+    name: Build Hysteria
+    runs-on: ubuntu-latest
+    env:
+      ACTIONS_ALLOW_UNSECURE_COMMANDS: true
+
     steps:
-      - name: 1. 强制检出原项目完整代码
+      - name: Checkout current repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-          repository: HARAJIT05/apple-music-rip
-          ref: main
-          path: .
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 2. 修复Ubuntu 24.04依赖锁&更新软件源
+      - name: Clone Hysteria repository
         run: |
-          sudo rm -f /var/lib/dpkg/lock-frontend
-          sudo dpkg --configure -a
-          sudo apt update -y && sudo apt upgrade -y --no-install-recommends
-          sudo apt clean
+          git clone https://github.com/apernet/hysteria.git hysteria-src
+          cd hysteria-src
+          git checkout master
 
-      - name: 3. 安装项目必要系统依赖（无Java、无冗余）
-        run: |
-          sudo apt install -y --no-install-recommends \
-            build-essential \
-            git \
-            curl \
-            wget \
-            unzip \
-            zip \
-            python3 \
-            python3-pip \
-            python3-venv \
-            libssl-dev \
-            pkg-config \
-            golang-go \
-            net-tools
-          sudo apt autoremove -y && sudo apt clean
-          echo "Python版本：$(python3 --version)"
-          echo "Go版本：$(go version)"
-
-      - name: 4. 配置Python虚拟环境&安装Web核心依赖
-        run: |
-          cd $GITHUB_WORKSPACE
-          python3 -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade pip
-          pip install flask==2.3.3 flask-cors==4.0.0 requests==2.31.0
-          pip freeze > requirements.txt
-
-      - name: 5. 核心修复：替换为无Nix、缩进合规的main.py（修复YAML语法）
-        run: |
-          cd $GITHUB_WORKSPACE
-          # 备份原main.py（便于溯源）
-          mv main.py main.py.bak
-          # 关键修复：EOF前后均用单引号包裹，YAML多行字符串语法合规
-          cat > main.py << 'EOF'
-import os
-import subprocess
-import sys
-from app import create_app
-
-app = create_app()
-
-# 检查必要的系统依赖
-def check_dependencies():
-    required_tools = ["git", "go", "python3", "pip3"]
-    missing = []
-    for tool in required_tools:
-        if subprocess.call(["which", tool], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-            missing.append(tool)
-    if missing:
-        print(f"❌ 缺少必要依赖：{', '.join(missing)}，请先安装")
-        sys.exit(1)
-    print("✅ 所有系统依赖检查通过")
-
-# 拉取apple-music-downloader核心工具
-def pull_downloader():
-    if not os.path.exists("apple-music-downloader"):
-        print("🔍 正在拉取apple-music-downloader核心工具...")
-        subprocess.run(["git", "clone", "https://github.com/zhaarey/apple-music-downloader.git"], check=True)
-        print("✅ apple-music-downloader拉取完成")
-    else:
-        print("✅ apple-music-downloader已存在，无需重新拉取")
-
-# 拉取wrapper鉴权工具
-def pull_wrapper():
-    if not os.path.exists("wrapper"):
-        print("🔍 正在拉取wrapper鉴权工具...")
-        subprocess.run(["git", "clone", "https://github.com/WorldObservationLog/wrapper.git"], check=True)
-        print("✅ wrapper拉取完成")
-    else:
-        print("✅ wrapper已存在，无需重新拉取")
-
-# 初始化项目（拉取所有核心工具）
-def init_project():
-    check_dependencies()
-    pull_downloader()
-    pull_wrapper()
-    print("🎉 项目初始化完成，所有核心工具已就绪")
-
-if __name__ == "__main__":
-    # 初始化项目
-    init_project()
-    # 启动Flask Web服务（默认端口5000，所有IP可访问）
-    app.run(host="0.0.0.0", port=5000, debug=False)
-EOF
-          # 添加执行权限
-          chmod +x main.py
-          # 验证新main.py语法（提前拦截问题）
-          python3 -m py_compile main.py
-          if [ $? -eq 0 ]; then
-            echo "✅ 新main.py创建成功，语法检查通过（无缩进/nix错误）"
-          else
-            echo "❌ 新main.py语法错误"
-            exit 1
-          fi
-        shell: /usr/bin/bash -e {0}
-
-      - name: 6. 项目初始化（拉取核心工具，无启动挂起风险）
-        run: |
-          cd $GITHUB_WORKSPACE
-          source .venv/bin/activate
-          # 仅执行初始化逻辑，不拉取服务，稳定无报错
-          python3 -c "from main import init_project; init_project()"
-          echo "✅ 核心工具（apple-music-downloader/wrapper）拉取完成"
-
-      - name: 7. 打包完整可运行产物（统一路径+环境变量导出）
-        run: |
-          cd $GITHUB_WORKSPACE
-          mkdir -p dist
-          # 容错复制所有核心文件，避免缺失目录中断打包
-          cp -r app/ main.py requirements.txt dist/ 2>/dev/null
-          cp -r .venv/ dist/ 2>/dev/null
-          cp -r apple-music-downloader/ dist/ 2>/dev/null
-          cp -r wrapper/ dist/ 2>/dev/null
-          # 定义固定产物名称，避免路径解析问题
-          PACKAGE_NAME="apple-music-rip-ubuntu2404-build.zip"
-          zip -r "${PACKAGE_NAME}" dist/
-          # 校验产物是否生成，提前拦截失败
-          if [ ! -f "${PACKAGE_NAME}" ]; then
-            echo "❌ 产物打包失败，未生成压缩包"
-            ls -lh
-            exit 1
-          fi
-          # 导出产物绝对路径，供上传步骤使用
-          echo "PACKAGE_PATH=$GITHUB_WORKSPACE/${PACKAGE_NAME}" >> $GITHUB_ENV
-          ls -lh "${PACKAGE_NAME}"
-          echo "✅ 产物打包完成：${PACKAGE_NAME}"
-
-      - name: 8. 上传构建产物（精准匹配路径，无上传失败）
-        uses: actions/upload-artifact@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          name: apple-music-rip-ubuntu2404-build
-          path: ${{ env.PACKAGE_PATH }}
-          retention-days: 90
-          if-no-files-found: error
+          go-version: "1.25"
 
-      - name: 9. 验证产物运行（语法检查+精准端口验证）
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r29
+          add-to-path: false
+
+      - name: Run build script (Windows only)
+        working-directory: ./hysteria-src
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          cd $GITHUB_WORKSPACE/dist
-          source .venv/bin/activate
-          # 第一步：强制Python语法检查，双重保障
-          echo "🔍 执行Python语法检查"
-          python3 -m py_compile main.py
-          if [ $? -ne 0 ]; then
-            echo "❌ main.py语法检查失败"
-            exit 1
-          fi
-          echo "✅ main.py语法检查通过"
-          # 第二步：后台启动项目，重定向所有日志
-          python3 main.py 2>&1 > run.log &
-          sleep 8 # 延长启动时间，确保Flask服务完全加载
-          # 第三步：精准检查5000端口（仅匹配Python3进程，避免干扰）
-          if netstat -tulpn 2>/dev/null | grep -E "(:5000).*python3"; then
-            echo "✅ 产物验证成功：5000端口已被Python3监听"
-          else
-            echo "❌ 产物验证失败，运行日志如下："
-            cat run.log || echo "无运行日志"
-            exit 1
-          fi
-          # 安全停止服务，屏蔽无关提示
-          pkill -f "python3 main.py" 2>/dev/null
-        shell: /usr/bin/bash -e {0}
+          export HY_APP_PLATFORMS="windows/amd64"
+          python hyperbole.py build -r
+
+      - name: Copy Windows executable to current repo
+        run: |
+          cp hysteria-src/build/hysteria-windows-amd64.exe ./
+          rm -rf hysteria-src
+
+      - name: Generate hash for Windows executable
+        run: |
+          sha256sum hysteria-windows-amd64.exe > hashes.txt
+
+      - name: Commit and push build artifacts
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "Build Hysteria from apernet/hysteria - $(date)" || echo "No changes to commit"
+          git checkout -b build-hysteria 2>/dev/null || git checkout build-hysteria
+          git remote set-url origin https://x-access-token:${{ secrets.WRAPPER_PUSH_TOKEN }}@github.com/${{ github.repository }}.git
+          git push -u origin build-hysteria
