@@ -9,14 +9,13 @@ on:
 permissions:
   contents: write  # 推送二进制到当前仓库
   actions: read
-  artifacts: write
 
 env:
   # 源码仓库配置
   SOURCE_REPO: "https://github.com/biliup/biliup.git"
   SOURCE_BRANCH: "master"
   # 产物推送配置
-  TARGET_BRANCH: "cli-binaries"  # 存储二进制的分支
+  TARGET_BRANCH: "biliup"  # 存储二进制的分支
   BIN_NAME: "biliup"             # 二进制基础名称
 
 jobs:
