@@ -56,28 +56,28 @@ jobs:
     - name: Update README with Docker instructions
       run: |
         cat >> README.md << 'EOF'
-
-## Docker Usage
-
-### Pull the image
-```bash
-docker pull ghcr.io/${{ github.repository }}:latest
-```
-
-### Run interactively
-```bash
-docker run -it --rm \
-  -v $(pwd)/downloads:/app/downloads \
-  -v $(pwd)/config.toml:/app/config.toml \
-  ghcr.io/${{ github.repository }}:latest
-```
-
-### Example commands inside container
-```bash
-dl https://music.apple.com/jp/album/nameless-name-single/1688539265
-dl -c aac https://music.apple.com/jp/song/caribbean-blue/339592231
-```
-EOF
+        
+        ## Docker Usage
+        
+        ### Pull the image
+        ```bash
+        docker pull ghcr.io/${{ github.repository }}:latest
+        ```
+        
+        ### Run interactively
+        ```bash
+        docker run -it --rm \
+          -v $(pwd)/downloads:/app/downloads \
+          -v $(pwd)/config.toml:/app/config.toml \
+          ghcr.io/${{ github.repository }}:latest
+        ```
+        
+        ### Example commands inside container
+        ```bash
+        dl https://music.apple.com/jp/album/nameless-name-single/1688539265
+        dl -c aac https://music.apple.com/jp/song/caribbean-blue/339592231
+        ```
+        EOF
 
     - name: Commit and push README updates
       run: |
